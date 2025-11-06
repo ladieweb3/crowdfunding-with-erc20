@@ -12,4 +12,26 @@ dependencies = [
 [tool.moccasin.project]
 src = "contracts"
 
+[tool.moccasin.networks.contracts]
+fund_token = {force_deploy = false, deployer_script = "script/deploy_erc20.py"}
+
+[tool.moccasin.networks.sepolia-zksync]
+url = "$ZKSYNC_SEPOLIA_RPC_URL"
+chain_id = 300
+default_account_name = "sepolia_account"
+is_zksync = true
+save_to_db = false
+explorer_uri = "https://explorer.sepolia.era.zksync.dev"
+explorer_type = "zksync"
+
+[tool.moccasin.networks.anvil-zksync]
+url = "http://0.0.0.0:8011"
+chain_id = 260
+prompt_live = false
+save_to_db = false
+is_zksync = true
+default_account_name="anvil-zyksync"
+unsafe_password_file = "~/.moccasin/unsafe-passwords/anvil-zyksync"
+
+
 

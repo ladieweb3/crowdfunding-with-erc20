@@ -31,19 +31,19 @@ struct  Campaign:
 
 
 event CampaignCreated:
-        CampaignId: indexed(uint256)
+        campaignId: indexed(uint256)
         creator: indexed(address)
         goal: uint256
         startAt: uint256
         endAt: uint256
 
 event CampaignFunded:
-        CampaignId: indexed(uint256)
+        campaignId: indexed(uint256)
         funders: indexed(address)
         amount: uint256
 
 event CampaignAmountClaimed:
-        CampaignId: indexed(uint256)
+        campaignId: indexed(uint256)
         creator: indexed(address)
         amount: uint256
 
@@ -52,7 +52,7 @@ event CampaignAmountClaimed:
 #                       IMMUTABLE VARIABLES
 # ------------------------------------------------------------------
 
-i_token: public(immutable(FundTokenInterface))
+I_TOKEN: public(immutable(FundTokenInterface))
 
 
 # ------------------------------------------------------------------
@@ -60,17 +60,17 @@ i_token: public(immutable(FundTokenInterface))
 # ------------------------------------------------------------------
 
 # Compteur de campagnes
-s_campaignsCount: uint256
+s_campaignsCount: public(uint256)
 # Mapping des campagnes par ID
-s_campaigns: HashMap[uint256, Campaign]
+s_campaigns: public(HashMap[uint256, Campaign])
 # Mapping des financeurs par campagne (limité à 1000 financeurs)
 s_fundersOfCampaign: public(HashMap[uint256, DynArray[address, 1000]])
 # Mapping des campagnes créées par créateur (limité à 100 campagnes par créateur)
-s_campaignCreatedByCreator: HashMap[address, DynArray[Campaign, 1000]]
+s_campaignCreatedByCreator: public(HashMap[address, DynArray[Campaign, 1000]])
 # ReentrancyGuard
 locked: bool
 # Mapping du montant financé par adresse et par campagne
-s_addressToAmountFundedByCampaign: HashMap[uint256, HashMap[address, uint256]]
+s_addressToAmountFundedByCampaign: public(HashMap[uint256, HashMap[address, uint256]])
 
 # ------------------------------------------------------------------
 #                           CONSTRUCTORS
@@ -78,14 +78,15 @@ s_addressToAmountFundedByCampaign: HashMap[uint256, HashMap[address, uint256]]
 
 @deploy
 def __init__(_token: address): 
-    i_token = FundTokenInterface(_token)
+    I_TOKEN = FundTokenInterface(_token)
+
 # ------------------------------------------------------------------
 #                            FUNCTIONS
 # ------------------------------------------------------------------
 
 
 @internal
-def non_reentrant():
+def _non_reentrant():
     """
     @notice Modifier pour prévenir les appels réentrants
     """
@@ -93,7 +94,7 @@ def non_reentrant():
     self.locked = True
 
 @internal
-def non_reentrant_final():
+def _non_reentrant_final():
     """
     @notice Doit être appelé à la fin des fonctions protégées
     """
@@ -101,40 +102,42 @@ def non_reentrant_final():
 
 @external
 def createCampaigns(
-    name: String[25],
-    description: String[100],
-    goal: uint256,
-    startAt: uint256,
-    endAt: uint256,
-    image: String[100]
+    _creator: address,
+    _name: String[25],
+    _description: String[100],
+    _goal: uint256,
+    _startAt: uint256,
+    _endAt: uint256,
+    _image: String[100]
 ) -> uint256:
     """
     @notice Create a new crowdfunding campaign
-    @param name The name of the campaign
-    @param description The description of the campaign
-    @param goal The funding goal of the campaign
-    @param startAt The start time of the campaign (timestamp)
-    @param endAt The end time of the campaign (timestamp)
-    @param image The image URL of the campaign
+    @param _creator The address of the campaign creator
+    @param _name The name of the campaign
+    @param _description The description of the campaign
+    @param _goal The funding goal of the campaign
+    @param _startAt The start time of the campaign (timestamp)
+    @param _endAt The end time of the campaign (timestamp)
+    @param _image The image URL of the campaign
     @return The ID of the created campaign
     """
-    assert startAt >= block.timestamp, "Start time must be in the future"
-    assert endAt > startAt, "End time must be after start time"
-    assert endAt <= block.timestamp + 90 * 86400, "End time must be within 90 days"
+    assert _startAt >= block.timestamp, "Start time must be in the future"
+    assert _endAt > _startAt, "End time must be after start time"
+    assert _endAt <= block.timestamp + 90 * 86400, "End time must be within 90 days"
 
     self.s_campaignsCount += 1
     campaign_id: uint256 = self.s_campaignsCount
 
     # Créer la nouvelle campagne
     new_campaign: Campaign = Campaign(
-        creator=msg.sender,
-        name=name,
-        description=description,
-        goal=goal,
+        creator=_creator,
+        name=_name,
+        description=_description,
+        goal=_goal,
         amountCollected=0,
-        startAt=startAt,
-        endAt=endAt,
-        image=image,
+        startAt=_startAt,
+        endAt=_endAt,
+        image=_image,
         funders=[],  # Liste vide simplifiée
         claimedByOwner=False
     )
@@ -143,11 +146,11 @@ def createCampaigns(
     self.s_campaignCreatedByCreator[msg.sender].append(new_campaign)
 
     log CampaignCreated(
-    CampaignId=campaign_id,
-    creator=msg.sender,
-    goal=goal,
-    startAt=startAt,
-    endAt=endAt
+    campaignId=campaign_id,
+    creator=_creator,
+    goal=_goal,
+    startAt=_startAt,
+    endAt=_endAt
     )
 
     return campaign_id
@@ -159,48 +162,54 @@ def fundCampaign(campaign_id: uint256, amount: uint256):
     @param campaign_id The ID of the campaign to fund
     @param amount The amount of funds to contribute
     """
-    self.non_reentrant()
+    self._non_reentrant()
 
+    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
     assert amount > 0, "Amount must be greater than 0"
     campaign: Campaign = self.s_campaigns[campaign_id]
     assert block.timestamp >= campaign.startAt and block.timestamp <= campaign.endAt, "Campaign is not active"
-    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
+    
 
-    campaign.amountCollected += amount
-    extcall i_token.approve(self, amount)
-    extcall i_token.transferFrom(msg.sender, self, amount)
+    self.s_campaigns[campaign_id].amountCollected += amount
+    #extcall I_TOKEN.approve(self, amount)
+    extcall I_TOKEN.transferFrom(msg.sender, self, amount)
     self.s_addressToAmountFundedByCampaign[campaign_id][msg.sender] += amount
     self.s_fundersOfCampaign[campaign_id].append(msg.sender)
-    self.non_reentrant_final()
+
+    self._non_reentrant_final()
 
     log CampaignFunded(
-        CampaignId=campaign_id,
+        campaignId=campaign_id,
         funders=msg.sender,
         amount=amount
     )
 
 @external
-def claimAmount(campaign_id: uint256):
+def claimFunds(campaign_id: uint256):
     """
     @notice Claim the collected funds for a successful campaign
     @param campaign_id The ID of the campaign to claim funds from
     """
 
-    self.non_reentrant()
+    self._non_reentrant()
 
     campaign: Campaign = self.s_campaigns[campaign_id]
     assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
     assert campaign.creator == msg.sender, "Only the creator can claim funds"
-    assert campaign.amountCollected >= campaign.goal, "Campaign did not reach its goal"
     assert not campaign.claimedByOwner, "Funds already claimed"
+    assert campaign.amountCollected >= campaign.goal, "Campaign did not reach its goal"
+    
 
-    campaign.claimedByOwner = True
-    extcall i_token.transfer(msg.sender, campaign.amountCollected)
+    self.s_campaigns[campaign_id].claimedByOwner = True
 
-    self.non_reentrant_final()
+    extcall I_TOKEN.transfer(msg.sender, campaign.amountCollected)
+    
+    self.s_campaigns[campaign_id].amountCollected=0
+
+    self._non_reentrant_final()
 
     log CampaignAmountClaimed(
-        CampaignId=campaign_id,
+        campaignId=campaign_id,
         creator=msg.sender,
         amount=campaign.amountCollected
     )
@@ -246,6 +255,18 @@ def getCampaignsCreatedByCreator(creator: address) -> DynArray[Campaign, 1000]:
     """
     return self.s_campaignCreatedByCreator[creator]
 
+@external
+@view
+def getAddressToAmountFundedByCampaign(campaign_id: uint256, funder: address) -> uint256:
+    """
+    @notice Get the amount funded by a specific address for a specific campaign
+    @param campaign_id The ID of the campaign
+    @param funder The address of the funder
+    @return The amount funded by the address for the campaign
+    """
+    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
+    return self.s_addressToAmountFundedByCampaign[campaign_id][funder]
+    
 
 @external
 @view
