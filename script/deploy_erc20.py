@@ -1,5 +1,6 @@
-from moccasin.boa_tools import VyperContract
 from eth_utils import to_wei
+from moccasin.boa_tools import VyperContract
+
 from contracts import fund_token
 
 INITIAL_SUPPLY = to_wei(1000, "ether")  

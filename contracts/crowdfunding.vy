@@ -12,7 +12,7 @@ from interfaces import FundTokenInterface
 #                        TYPE DECLARATIONS
 # ------------------------------------------------------------------
 
-struct  Campaign:
+struct Campaign:
     creator: address
     name: String[25]
     description: String[100]
@@ -31,26 +31,24 @@ struct  Campaign:
 
 
 event CampaignCreated:
-        campaignId: indexed(uint256)
-        creator: indexed(address)
-        goal: uint256
-        startAt: uint256
-        endAt: uint256
+    campaignId: indexed(uint256)
+    creator: indexed(address)
+    goal: uint256
+    startAt: uint256
+    endAt: uint256
+
 
 event CampaignFunded:
-        campaignId: indexed(uint256)
-        funders: indexed(address)
-        amount: uint256
+    campaignId: indexed(uint256)
+    funders: indexed(address)
+    amount: uint256
+
 
 event CampaignAmountClaimed:
-        campaignId: indexed(uint256)
-        creator: indexed(address)
-        amount: uint256
+    campaignId: indexed(uint256)
+    creator: indexed(address)
+    amount: uint256
 
-
-# ------------------------------------------------------------------
-#                       IMMUTABLE VARIABLES
-# ------------------------------------------------------------------
 
 I_TOKEN: public(immutable(FundTokenInterface))
 
@@ -70,35 +68,23 @@ s_campaignCreatedByCreator: public(HashMap[address, DynArray[Campaign, 1000]])
 # ReentrancyGuard
 locked: bool
 # Mapping du montant financé par adresse et par campagne
-s_addressToAmountFundedByCampaign: public(HashMap[uint256, HashMap[address, uint256]])
+s_addressToAmountFundedByCampaign: public(
+    HashMap[uint256, HashMap[address, uint256]]
+)
 
 # ------------------------------------------------------------------
 #                           CONSTRUCTORS
 # ------------------------------------------------------------------
 
 @deploy
-def __init__(_token: address): 
+def __init__(_token: address):
     I_TOKEN = FundTokenInterface(_token)
+
 
 # ------------------------------------------------------------------
 #                            FUNCTIONS
 # ------------------------------------------------------------------
 
-
-@internal
-def _non_reentrant():
-    """
-    @notice Modifier pour prévenir les appels réentrants
-    """
-    assert not self.locked, "Reentrant call"
-    self.locked = True
-
-@internal
-def _non_reentrant_final():
-    """
-    @notice Doit être appelé à la fin des fonctions protégées
-    """
-    self.locked = False
 
 @external
 def createCampaigns(
@@ -108,7 +94,7 @@ def createCampaigns(
     _goal: uint256,
     _startAt: uint256,
     _endAt: uint256,
-    _image: String[100]
+    _image: String[100],
 ) -> uint256:
     """
     @notice Create a new crowdfunding campaign
@@ -123,7 +109,9 @@ def createCampaigns(
     """
     assert _startAt >= block.timestamp, "Start time must be in the future"
     assert _endAt > _startAt, "End time must be after start time"
-    assert _endAt <= block.timestamp + 90 * 86400, "End time must be within 90 days"
+    assert (
+        _endAt <= block.timestamp + 90 * 86400
+    ), "End time must be within 90 days"
 
     self.s_campaignsCount += 1
     campaign_id: uint256 = self.s_campaignsCount
@@ -139,80 +127,126 @@ def createCampaigns(
         endAt=_endAt,
         image=_image,
         funders=[],  # Liste vide simplifiée
-        claimedByOwner=False
+        claimedByOwner=False,
     )
     self.s_campaigns[campaign_id] = new_campaign
 
     self.s_campaignCreatedByCreator[msg.sender].append(new_campaign)
 
     log CampaignCreated(
-    campaignId=campaign_id,
-    creator=_creator,
-    goal=_goal,
-    startAt=_startAt,
-    endAt=_endAt
+        campaignId=campaign_id,
+        creator=_creator,
+        goal=_goal,
+        startAt=_startAt,
+        endAt=_endAt,
     )
 
     return campaign_id
 
+
 @external
+@nonreentrant
 def fundCampaign(campaign_id: uint256, amount: uint256):
     """
     @notice Fund a crowdfunding campaign
     @param campaign_id The ID of the campaign to fund
     @param amount The amount of funds to contribute
     """
-    self._non_reentrant()
 
-    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
-    assert amount > 0, "Amount must be greater than 0"
     campaign: Campaign = self.s_campaigns[campaign_id]
-    assert block.timestamp >= campaign.startAt and block.timestamp <= campaign.endAt, "Campaign is not active"
-    
 
+    # 1. Checks
+    assert (
+        campaign_id > 0 and campaign_id <= self.s_campaignsCount
+    ), "Campaign does not exist"
+    assert (
+        block.timestamp >= campaign.startAt
+        and block.timestamp <= campaign.endAt
+    ), "Campaign is not active"
+    assert amount > 0, "Amount must be greater than 0"
+
+    # 2. Effects & 3. Interaction
     self.s_campaigns[campaign_id].amountCollected += amount
-    #extcall I_TOKEN.approve(self, amount)
     extcall I_TOKEN.transferFrom(msg.sender, self, amount)
     self.s_addressToAmountFundedByCampaign[campaign_id][msg.sender] += amount
     self.s_fundersOfCampaign[campaign_id].append(msg.sender)
 
-    self._non_reentrant_final()
-
+    # 4. Events
     log CampaignFunded(
-        campaignId=campaign_id,
-        funders=msg.sender,
-        amount=amount
+        campaignId=campaign_id, funders=msg.sender, amount=amount
     )
 
+
 @external
+@nonreentrant
 def claimFunds(campaign_id: uint256):
     """
     @notice Claim the collected funds for a successful campaign
     @param campaign_id The ID of the campaign to claim funds from
     """
 
-    self._non_reentrant()
+    campaign: Campaign = self.s_campaigns[campaign_id]
+
+    # 1. Checks
+    assert (
+        campaign_id > 0 and campaign_id <= self.s_campaignsCount
+    ), "Campaign does not exist"
+    assert campaign.creator == msg.sender, "Only the creator can claim funds"
+    assert block.timestamp > campaign.endAt, "Campaign not ended"
+    assert not campaign.claimedByOwner, "Funds already claimed"
+    assert (
+        campaign.amountCollected >= campaign.goal
+    ), "Campaign did not reach its goal"
+
+    # 2. Effects
+    amount_to_transfer: uint256 = campaign.amountCollected
+    self.s_campaigns[campaign_id].claimedByOwner = True
+    self.s_campaigns[campaign_id].amountCollected = 0
+
+    # 3. Interaction
+
+    extcall I_TOKEN.transfer(campaign.creator, amount_to_transfer)
+
+    # 4. Events
+    log CampaignAmountClaimed(
+        campaignId=campaign_id, creator=msg.sender, amount=amount_to_transfer
+    )
+
+
+@external
+@nonreentrant
+def claimFundsWithoutZeroing(campaign_id: uint256):
+    """
+    @notice Claim the collected funds for a successful campaign but without zeroing amountCollected
+    @param campaign_id The ID of the campaign to claim funds from
+    """
 
     campaign: Campaign = self.s_campaigns[campaign_id]
-    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
-    assert campaign.creator == msg.sender, "Only the creator can claim funds"
-    assert not campaign.claimedByOwner, "Funds already claimed"
-    assert campaign.amountCollected >= campaign.goal, "Campaign did not reach its goal"
-    
 
+    # 1. Checks
+    assert (
+        campaign_id > 0 and campaign_id <= self.s_campaignsCount
+    ), "Campaign does not exist"
+    assert campaign.creator == msg.sender, "Only the creator can claim funds"
+    assert block.timestamp > campaign.endAt, "Campaign not ended"
+    assert not campaign.claimedByOwner, "Funds already claimed"
+    assert (
+        campaign.amountCollected >= campaign.goal
+    ), "Campaign did not reach its goal"
+
+    # 2. Effects
     self.s_campaigns[campaign_id].claimedByOwner = True
 
+    # 3. Interaction
     extcall I_TOKEN.transfer(msg.sender, campaign.amountCollected)
-    
-    self.s_campaigns[campaign_id].amountCollected=0
 
-    self._non_reentrant_final()
-
+    # 4. Events
     log CampaignAmountClaimed(
         campaignId=campaign_id,
         creator=msg.sender,
-        amount=campaign.amountCollected
+        amount=campaign.amountCollected,
     )
+
 
 @external
 @view
@@ -223,6 +257,7 @@ def getTotalCampaigns() -> uint256:
     """
     return self.s_campaignsCount
 
+
 @external
 @view
 def getCampaign(campaign_id: uint256) -> Campaign:
@@ -231,8 +266,25 @@ def getCampaign(campaign_id: uint256) -> Campaign:
     @param campaign_id The ID of the campaign to retrieve
     @return The campaign details
     """
-    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
+    assert (
+        campaign_id > 0 and campaign_id <= self.s_campaignsCount
+    ), "Campaign does not exist"
     return self.s_campaigns[campaign_id]
+
+
+@external
+@view
+def getAmountCollected(campaign_id: uint256) -> uint256:
+    """
+    @notice Get the amount collected for a specific campaign
+    @param campaign_id The ID of the campaign
+    @return The amount collected for the campaign
+    """
+    assert (
+        campaign_id > 0 and campaign_id <= self.s_campaignsCount
+    ), "Campaign does not exist"
+    return self.s_campaigns[campaign_id].amountCollected
+
 
 @external
 @view
@@ -242,8 +294,11 @@ def getFundersOfCampaign(campaign_id: uint256) -> DynArray[address, 1000]:
     @param campaign_id The ID of the campaign
     @return The list of funders' addresses
     """
-    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
+    assert (
+        campaign_id > 0 and campaign_id <= self.s_campaignsCount
+    ), "Campaign does not exist"
     return self.s_fundersOfCampaign[campaign_id]
+
 
 @external
 @view
@@ -255,18 +310,23 @@ def getCampaignsCreatedByCreator(creator: address) -> DynArray[Campaign, 1000]:
     """
     return self.s_campaignCreatedByCreator[creator]
 
+
 @external
 @view
-def getAddressToAmountFundedByCampaign(campaign_id: uint256, funder: address) -> uint256:
+def getAddressToAmountFundedByCampaign(
+    campaign_id: uint256, funder: address
+) -> uint256:
     """
     @notice Get the amount funded by a specific address for a specific campaign
     @param campaign_id The ID of the campaign
     @param funder The address of the funder
     @return The amount funded by the address for the campaign
     """
-    assert campaign_id > 0 and campaign_id <= self.s_campaignsCount, "Campaign does not exist"
+    assert (
+        campaign_id > 0 and campaign_id <= self.s_campaignsCount
+    ), "Campaign does not exist"
     return self.s_addressToAmountFundedByCampaign[campaign_id][funder]
-    
+
 
 @external
 @view
@@ -282,4 +342,3 @@ def getAllCampaigns() -> DynArray[Campaign, 1000]:
             break
         campaigns.append(self.s_campaigns[i])
     return campaigns
-

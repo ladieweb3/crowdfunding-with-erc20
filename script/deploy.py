@@ -1,6 +1,8 @@
 from moccasin.boa_tools import VyperContract
-from contracts import crowdfunding
 from moccasin.config import get_active_network
+
+from contracts import crowdfunding
+
 
 def deploy_crowdfunding(erc20_token: VyperContract) -> VyperContract:
     """

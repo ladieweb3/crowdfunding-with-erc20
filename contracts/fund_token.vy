@@ -42,4 +42,3 @@ def __init__(initial_supply: uint256):
     ow.__init__()
     erc20.__init__(NAME, SYMBOL, DECIMALS, NAME, EIP712_VERSION)
     erc20._mint(msg.sender, initial_supply)
-
